@@ -17,10 +17,6 @@
 
 #include <Windows.h>
 
-#else
-
-#include <Carbon/Carbon.h>
-
 #endif
 
 

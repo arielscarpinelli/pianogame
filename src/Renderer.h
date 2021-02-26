@@ -10,7 +10,7 @@
 #ifdef WIN32
 typedef HDC Context;
 #else
-typedef AGLContext Context;
+typedef CGLContextObj Context;
 #endif
 
 class Tga;
@@ -46,6 +46,8 @@ public:
 
    void DrawTga(const Tga *tga, int x, int y) const;
    void DrawTga(const Tga *tga, int x, int y, int width, int height, int src_x, int src_y) const;
+
+   void DrawTextTextureQuad(unsigned int textureId, int in_x, int in_y, int width, int height) const;
 
    void DrawStretchedTga(const Tga *tga, int x, int y, int w, int h) const;
    void DrawStretchedTga(const Tga *tga, int x, int y, int w, int h, int src_x, int src_y, int src_w, int src_h) const;

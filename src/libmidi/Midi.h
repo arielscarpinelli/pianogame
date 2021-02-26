@@ -61,16 +61,16 @@ private:
    const static microseconds_t OneMinuteInMicroseconds = 60000000;
    const static microseconds_t DefaultUSTempo = OneMinuteInMicroseconds / DefaultBPM;
 
-   static microseconds_t ConvertPulsesToMicroseconds(unsigned long pulses, microseconds_t tempo, unsigned short pulses_per_quarter_note);
+   static microseconds_t ConvertPulsesToMicroseconds(uint32_t pulses, microseconds_t tempo, unsigned short pulses_per_quarter_note);
 
    Midi(): m_initialized(false), m_microsecond_dead_start_air(0) { Reset(0, 0); }
    
    // This is O(n) where n is the number of tempo changes (across all tracks) in
    // the song up to the specified time.  Tempo changes are usually a small number.
    // (Almost always 0 or 1, going up to maybe 30-100 in rare cases.)
-   microseconds_t GetEventPulseInMicroseconds(unsigned long event_pulses, unsigned short pulses_per_quarter_note) const;
+   microseconds_t GetEventPulseInMicroseconds(uint32_t event_pulses, unsigned short pulses_per_quarter_note) const;
 
-   unsigned long FindFirstNotePulse();
+   uint32_t FindFirstNotePulse();
 
    void BuildTempoTrack();
    void TranslateNotes(const NoteSet &notes, unsigned short pulses_per_quarter_note);

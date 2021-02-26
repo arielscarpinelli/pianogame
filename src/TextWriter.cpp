@@ -15,7 +15,14 @@ static std::map<int, HFONT> font_handle_lookup;
 static int next_call_list_start = 1;
 #else
 // TODO: This should be deleted at shutdown
-static std::map<int, ATSUStyle> atsu_style_lookup;
+
+GLuint Texture2DCreateFromString(const GLchar * const pString,
+                                const GLchar * const pFontName,
+                                const CGFloat& rFontSize,
+                                const CTTextAlignment& rAlignment,
+                                const CGFloat * const pColor,
+                                 CGSize& rSize);
+
 #endif
 
 // TODO: This should be deleted at shutdown
@@ -71,43 +78,6 @@ x(in_x), y(in_y), size(in_size), original_x(0), last_line_height(0), centered(in
    // TODO: is this sufficient?
    point_size = size;
 
-   if (font_size_lookup[size] == 0)
-   {
-      int list_start = glGenLists(128);
-
-      // MACNOTE: Force Trebuchet MS.  It's what we mostly use anyway, but
-      // I want to be sure they have it.
-      const CFStringRef font_name = CFSTR("Trebuchet MS");
-      
-      ATSFontFamilyRef font = ATSFontFamilyFindFromName(font_name, kATSOptionFlagsDefault);
-      if (!font) throw PianoGameError(WSTRING(L"Couldn't get ATSFontFamilyRef for font '" << WideFromMacString(font_name) << L"'."));         
-      
-      AGLContext context = aglGetCurrentContext();
-      if (!context) throw PianoGameError(L"Couldn't retrieve OpenGL context while creating font.");         
-      
-      GLboolean ret = aglUseFont(context, font, normal, size, 0, 128, list_start);
-      if (ret == GL_FALSE) throw PianoGameError(WSTRING(L"aglUseFont() call failed with error code: " << aglGetError()));
-      
-      font_size_lookup[size] = list_start;
-
-
-      // Create the ATSU style object that we'll use for calculating text extents and store it for later.
-      ATSUStyle style;
-
-      OSStatus status = ATSUCreateStyle(&style);
-      if (status != noErr) throw PianoGameError(WSTRING(L"Couldn't create ATSU style.  Error code: " << static_cast<int>(status)));
-
-      Fixed fixed_size = Long2Fix(size);
-      
-      ATSUAttributeTag tags[] = { kATSUSizeTag };
-      ByteCount sizes[] = { sizeof(Fixed) };
-      ATSUAttributeValuePtr values[] = { &fixed_size };
-      status = ATSUSetAttributes(style, sizeof(sizes) / sizeof(ByteCount), tags, sizes, values);
-      if (status != noErr) throw PianoGameError(WSTRING(L"Couldn't set ATSU style attributes.  Error code: " << static_cast<int>(status)));
-      
-      atsu_style_lookup[size] = style;      
-   }
-
 #endif
 
 }
@@ -134,18 +104,36 @@ TextWriter& Text::operator<<(TextWriter& tw) const
 {
    int draw_x;
    int draw_y;
+    
+    // TODO: This isn't Unicode!
+    std::string narrow(m_text.begin(), m_text.end());
+
+#ifndef WIN32
+
+   CGFloat color[4] = {m_color.r / 255.0f, m_color.g / 255.0f, m_color.b / 255.0f, m_color.a / 255.0f};
+   CGSize size;
+
+   GLuint texture = Texture2DCreateFromString(narrow.c_str(), nullptr, tw.size, tw.centered ? kCTTextAlignmentCenter : kCTTextAlignmentLeft, color, size);
+    
+    draw_x = size.width;
+    draw_y = size.height;
+
+#endif
    calculate_position_and_advance_cursor(tw, &draw_x, &draw_y);
 
-   // TODO: This isn't Unicode!
-   std::string narrow(m_text.begin(), m_text.end());
-
-   glBindTexture(GL_TEXTURE_2D, 0);
    
    glPushMatrix();
-   tw.renderer.SetColor(m_color);
-   glListBase(font_size_lookup[tw.size]); 
-   glRasterPos2i(draw_x, draw_y + tw.size);
-   glCallLists(static_cast<int>(narrow.length()), GL_UNSIGNED_BYTE, narrow.c_str());
+#ifdef WIN32
+    glBindTexture(GL_TEXTURE_2D, 0);
+    tw.renderer.SetColor(m_color);
+    glListBase(font_size_lookup[tw.size]);
+    glRasterPos2i(draw_x, draw_y + tw.size);
+    glCallLists(static_cast<int>(narrow.length()), GL_UNSIGNED_BYTE, narrow.c_str());
+#else
+    tw.renderer.DrawTextTextureQuad(texture, draw_x, draw_y, size.width, size.height);
+
+    //glDeleteTextures(1, &texture);
+#endif
    glPopMatrix();
 
    // TODO: Should probably delete these on shutdown.
@@ -176,54 +164,21 @@ void Text::calculate_position_and_advance_cursor(TextWriter &tw, int *out_x, int
    // Return the hdc settings to their previous setting
    SelectObject(c, previous_font);
    SetMapMode(c, previous_map_mode);
-
 #else
 
-   // Convert passed-in text to Unicode
-   CFStringRef cftext = MacStringFromWide(m_text, true).get();
-   CFDataRef unitext = CFStringCreateExternalRepresentation(kCFAllocatorDefault, cftext, kCFStringEncodingUnicode, 0);
-   if (!unitext) throw PianoGameError(WSTRING(L"Couldn't convert string to unicode: '" << m_text << L"'"));
-   CFRelease(cftext);
-
-   // Create an ATSU layout
-   ATSUTextLayout layout;
-   const UniCharCount run_length = kATSUToTextEnd;
-   OSStatus status = ATSUCreateTextLayoutWithTextPtr((ConstUniCharArrayPtr)CFDataGetBytePtr(unitext), kATSUFromTextBeginning, kATSUToTextEnd, CFDataGetLength(unitext) / 2, 1, &run_length, &atsu_style_lookup[tw.size], &layout);
-   if (status != noErr) throw PianoGameError(WSTRING(L"Couldn't create ATSU text layout for string: '" << m_text << L"', Error code: " << static_cast<int>(status)));
-
-   // Measure the size of the resulting text
-   Rect drawing_rect = { 0, 0, 0, 0 };
-   
-   ATSUTextMeasurement before = 0;
-   ATSUTextMeasurement after = 0;
-   ATSUTextMeasurement ascent = 0;
-   ATSUTextMeasurement descent = 0;
-   
-   status = ATSUGetUnjustifiedBounds(layout, 0, kATSUToTextEnd, &before, &after, &ascent, &descent);
-   if (status != noErr) throw PianoGameError(WSTRING(L"Couldn't get unjustified bounds for text layout for string: '" << m_text << L"', Error code: " << static_cast<int>(status)));
-
-   // NOTE: the +1 here is completely arbitrary and seemed to place the text better.
-   // It may just be a difference between the Windows and Mac text placement systems.
-   drawing_rect.top += tw.y + 1;
-   drawing_rect.left += tw.x + FixRound(before);
-   drawing_rect.right += tw.x + FixRound(after);
-
-   // Not used.
-   drawing_rect.bottom = 0;
-
-   // Clean-up
-	ATSUDisposeTextLayout(layout);
-   CFRelease(unitext);
+    Rect drawing_rect = { tw.y, tw.x, tw.y + *out_y, tw.x + *out_x};
 
 #endif
 
-   // Update the text-writer with post-draw coordinates
-   if (tw.centered) drawing_rect.left -= (drawing_rect.right - drawing_rect.left) / 2;
-   if (!tw.centered) tw.x += drawing_rect.right - drawing_rect.left;
+    // Update the text-writer with post-draw coordinates
+    if (tw.centered) drawing_rect.left -= (drawing_rect.right - drawing_rect.left) / 2;
+    if (!tw.centered) tw.x += drawing_rect.right - drawing_rect.left;
 
-   // Tell the draw function where to put the text
-   *out_x = drawing_rect.left;
-   *out_y = drawing_rect.top;
+    // Tell the draw function where to put the text
+    *out_x = drawing_rect.left;
+    *out_y = drawing_rect.top;
+
+
 }
 
 TextWriter& operator<<(TextWriter& tw, const Text& t)
@@ -241,3 +196,392 @@ TextWriter& operator<<(TextWriter& tw, const int& i)           { return tw << Te
 TextWriter& operator<<(TextWriter& tw, const unsigned int& i)  { return tw << Text(i, White); }
 TextWriter& operator<<(TextWriter& tw, const long& l)          { return tw << Text(l, White); }
 TextWriter& operator<<(TextWriter& tw, const unsigned long& l) { return tw << Text(l, White); }
+
+// Create a bitmap context from a string, font, justification, and font size
+static CGContextRef CGContextCreateFromAttributedString(CFAttributedStringRef pAttrString,
+                                                        const CFRange& rRange,
+                                                        CGColorSpaceRef pColorspace,
+                                                        CGSize& rSize)
+{
+    CGContextRef pContext = nullptr;
+    
+    if(pAttrString != nullptr)
+    {
+        // Acquire a frame setter
+        CTFramesetterRef pFrameSetter = CTFramesetterCreateWithAttributedString(pAttrString);
+        
+        if(pFrameSetter != nullptr)
+        {
+            // Create a path for layout
+            CGMutablePathRef pPath = CGPathCreateMutable();
+            
+            if(pPath != nullptr)
+            {
+                CFRange range;
+                CGSize  constraint = CGSizeMake(CGFLOAT_MAX, CGFLOAT_MAX);
+                
+                // Get the CoreText suggested size from our framesetter
+                rSize = CTFramesetterSuggestFrameSizeWithConstraints(pFrameSetter,
+                                                                     rRange,
+                                                                     nullptr,
+                                                                     constraint,
+                                                                     &range);
+                
+                // Set path bounds
+                CGRect bounds = CGRectMake(0.0f,
+                                           0.0f,
+                                           rSize.width,
+                                           rSize.height);
+                
+                // Bound the path
+                CGPathAddRect(pPath, nullptr, bounds);
+                
+                // Layout the attributed string in a frame
+                CTFrameRef pFrame = CTFramesetterCreateFrame(pFrameSetter, range, pPath, nullptr);
+                
+                if(pFrame != nullptr)
+                {
+                    // Compute bounds for the bitmap context
+                    size_t width  = size_t(rSize.width);
+                    size_t height = size_t(rSize.height);
+                    size_t stride = sizeof(GLuint) * width;
+                    
+                    // No explicit backing-store allocation here.  We'll let the
+                    // context allocate the storage for us.
+                    pContext = CGBitmapContextCreate(nullptr,
+                                                     width,
+                                                     height,
+                                                     8,
+                                                     stride,
+                                                     pColorspace,
+                                                     kCGImageAlphaPremultipliedLast);
+                    
+                    if(pContext != nullptr)
+                    {
+                        // Use this for vertical reflection
+                        CGContextTranslateCTM(pContext, 0.0, height);
+                        CGContextScaleCTM(pContext, 1.0, -1.0);
+                        
+                        // Draw the frame into a bitmap context
+                        CTFrameDraw(pFrame, pContext);
+                        
+                        // Flush the context
+                        CGContextFlush(pContext);
+                    } // if
+                    
+                    // Release the frame
+                    CFRelease(pFrame);
+                } // if
+                
+                CFRelease(pPath);
+            } // if
+            
+            CFRelease(pFrameSetter);
+        } // if
+    } // if
+    
+    return pContext;
+} // CGContextCreateFromString
+    
+
+// Create an attributed string from a CF string, font, justification, and font size
+static CFMutableAttributedStringRef CFMutableAttributedStringCreate(CFStringRef pString,
+                                                                    CFStringRef pFontNameSrc,
+                                                                    CGColorRef pComponents,
+                                                                    const CGFloat& rFontSize,
+                                                                    const CTTextAlignment nAlignment,
+                                                                    CFRange *pRange)
+{
+    CFMutableAttributedStringRef pAttrString = nullptr;
+    
+    if(pString != nullptr)
+    {
+        // Paragraph style setting structure
+        const GLuint nCntStyle = 2;
+        
+        // For single spacing between the lines
+        const CGFloat nLineHeightMultiple = 1.0f;
+        
+        // Paragraph settings with alignment and style
+        CTParagraphStyleSetting settings[nCntStyle] =
+        {
+            {
+                kCTParagraphStyleSpecifierAlignment,
+                sizeof(CTTextAlignment),
+                &nAlignment
+            },
+            {
+                kCTParagraphStyleSpecifierLineHeightMultiple,
+                sizeof(CGFloat),
+                &nLineHeightMultiple
+            }
+        };
+        
+        // Create a paragraph style
+        CTParagraphStyleRef pStyle = CTParagraphStyleCreate(settings, nCntStyle);
+        
+        if(pStyle != nullptr)
+        {
+            // If the font name is nullptr default to Helvetica
+            CFStringRef pFontNameDst = (pFontNameSrc) ? pFontNameSrc : CFSTR("Helvetica");
+            
+            // Prepare font
+            CTFontRef pFont = CTFontCreateWithName(pFontNameDst, rFontSize, nullptr);
+            
+            if(pFont != nullptr)
+            {
+                // Set attributed string properties
+                const GLuint nCntDict = 3;
+                
+                CFStringRef keys[nCntDict] =
+                {
+                    kCTParagraphStyleAttributeName,
+                    kCTFontAttributeName,
+                    kCTForegroundColorAttributeName
+                };
+                
+                CFTypeRef values[nCntDict] =
+                {
+                    pStyle,
+                    pFont,
+                    pComponents
+                };
+                
+                // Create a dictionary of attributes for our string
+                CFDictionaryRef pAttributes = CFDictionaryCreate(nullptr,
+                                                                 (const void **)&keys,
+                                                                 (const void **)&values,
+                                                                 nCntDict,
+                                                                 &kCFTypeDictionaryKeyCallBacks,
+                                                                 &kCFTypeDictionaryValueCallBacks);
+                
+                if(pAttributes != nullptr)
+                {
+                    // Creating a mutable attributed string
+                    pAttrString = CFAttributedStringCreateMutable(kCFAllocatorDefault, 0);
+                    
+                    if(pAttrString != nullptr)
+                    {
+                        // Set a mutable attributed string with the input string
+                        CFAttributedStringReplaceString(pAttrString, CFRangeMake(0, 0), pString);
+                        
+                        // Compute the mutable attributed string range
+                        *pRange = CFRangeMake(0, CFAttributedStringGetLength(pAttrString));
+                        
+                        // Set the attributes
+                        CFAttributedStringSetAttributes(pAttrString, *pRange, pAttributes, 0);
+                    } // if
+                    
+                    CFRelease(pAttributes);
+                } // if
+                
+                CFRelease(pFont);
+            } // if
+            
+            CFRelease(pStyle);
+        } // if
+    } // if
+    
+    return pAttrString;
+} // CFMutableAttributedStringCreate
+
+// Create a 2D texture
+static GLuint GLUTexture2DCreate(const GLuint& rWidth,
+                                 const GLuint& rHeight,
+                                 const GLvoid * const pPixels)
+{
+    GLuint nTID = 0;
+    
+    // Greate a texture
+    glGenTextures(1, &nTID);
+    
+    if(nTID)
+    {
+        // Bind a texture with ID
+        glBindTexture(GL_TEXTURE_2D, nTID);
+        
+        // Set texture properties (including linear mipmap)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        
+        // Initialize the texture
+        glTexImage2D(GL_TEXTURE_2D,
+                     0,
+                     GL_RGBA,
+                     rWidth,
+                     rHeight,
+                     0,
+                     GL_RGBA,
+                     GL_UNSIGNED_INT_8_8_8_8_REV,
+                     pPixels);
+        
+        // Generate mipmaps
+        glGenerateMipmap(GL_TEXTURE_2D);
+        
+        // Discard
+        glBindTexture(GL_TEXTURE_2D, 0);
+    } // if
+    
+    return nTID;
+} // GLUTexture2DCreate
+
+// Create a texture from a bitmap context
+static GLuint GLUTexture2DCreateFromContext(CGContextRef pContext)
+{
+    GLuint nTID = 0;
+    
+    if(pContext != nullptr)
+    {
+        GLuint nWidth  = GLuint(CGBitmapContextGetWidth(pContext));
+        GLuint nHeight = GLuint(CGBitmapContextGetHeight(pContext));
+        
+        const GLvoid *pPixels = CGBitmapContextGetData(pContext);
+        
+        nTID = GLUTexture2DCreate(nWidth, nHeight, pPixels);
+        
+        // Was there a GL error?
+        GLenum nErr = glGetError();
+        
+        if(nErr != GL_NO_ERROR)
+        {
+            glDeleteTextures(1, &nTID);
+            
+            throw PianoGameError(L"OpenGL error trying to create texture");
+        } // if
+    } // if
+    
+    return nTID;
+} // GLUTexture2DCreateFromContext
+
+// Create a bitmap context from a core foundation string, font,
+// justification, and font size
+static CGContextRef CGContextCreateFromString(CFStringRef pString,
+                                              CFStringRef pFontName,
+                                              const CGFloat& rFontSize,
+                                              const CTTextAlignment& rAlignment,
+                                              const CGFloat * const pComponents,
+                                              CGSize &rSize)
+{
+    CGContextRef pContext = nullptr;
+    
+    if(pString != nullptr)
+    {
+        // Get a generic linear RGB color space
+        CGColorSpaceRef pColorspace = CGColorSpaceCreateWithName(kCGColorSpaceGenericRGBLinear);
+        
+        if(pColorspace != nullptr)
+        {
+            // Create a white color reference
+            CGColorRef pColor = CGColorCreate(pColorspace, pComponents);
+            
+            if(pColor != nullptr)
+            {
+                // Creating a mutable attributed string
+                CFRange range;
+                
+                CFMutableAttributedStringRef pAttrString = CFMutableAttributedStringCreate(pString,
+                                                                                           pFontName,
+                                                                                           pColor,
+                                                                                           rFontSize,
+                                                                                           rAlignment,
+                                                                                           &range);
+                
+                if(pAttrString != nullptr)
+                {
+                    // Create a context from our attributed string
+                    pContext = CGContextCreateFromAttributedString(pAttrString,
+                                                                   range,
+                                                                   pColorspace,
+                                                                   rSize);
+                    
+                    CFRelease(pAttrString);
+                } // if
+                
+                CFRelease(pColor);
+            } // if
+            
+            CFRelease(pColorspace);
+        } // if
+    } // if
+    
+    return pContext;
+} // CGContextCreateFromString
+
+// Create a bitmap context from a c-string, font, justification, and font size
+static CGContextRef CGContextCreateFromString(const GLchar * const pString,
+                                              const GLchar * const pFontName,
+                                              const CGFloat& rFontSize,
+                                              const CTTextAlignment& rAlignment,
+                                              const CGFloat * const pComponents,
+                                              CGSize& rSize)
+{
+    CGContextRef pContext = nullptr;
+    
+    if(pString != nullptr)
+    {
+        CFStringRef pCFString = CFStringCreateWithCString(kCFAllocatorDefault,
+                                                          pString,
+                                                          kCFStringEncodingASCII);
+        
+        if(pCFString != nullptr)
+        {
+            const GLchar *pFontString = (pFontName) ? pFontName : "Helvetica";
+            
+            CFStringRef pFontCFString = CFStringCreateWithCString(kCFAllocatorDefault,
+                                                                  pFontString,
+                                                                  kCFStringEncodingASCII);
+            
+            if(pFontCFString != nullptr)
+            {
+                pContext = CGContextCreateFromString(pCFString,
+                                                     pFontCFString,
+                                                     rFontSize,
+                                                     rAlignment,
+                                                     pComponents,
+                                                     rSize);
+                
+                CFRelease(pFontCFString);
+            } // if
+            
+            CFRelease(pCFString);
+        } // if
+    } // if
+    
+    return pContext;
+} // CGContextCreateFromString
+    
+// Generate a texture from a cstring, using a font, at a size,
+// with alignment and color
+GLuint Texture2DCreateFromString(const GLchar * const pString,
+                                      const GLchar * const pFontName,
+                                      const CGFloat& rFontSize,
+                                      const CTTextAlignment& rAlignment,
+                                      const CGFloat * const pColor,
+                                      CGSize& rSize)
+{
+    GLuint nTID = 0;
+    
+    CGContextRef pCtx = CGContextCreateFromString(pString,
+                                                  pFontName,
+                                                  rFontSize,
+                                                  rAlignment,
+                                                  pColor,
+                                                  rSize);
+    
+    if(pCtx != nullptr)
+    {
+        nTID = GLUTexture2DCreateFromContext(pCtx);
+        
+        CGContextRelease(pCtx);
+    } // if
+    
+    return nTID;
+} // GLUTexture2DCreateFromString
+
+
+
+
+

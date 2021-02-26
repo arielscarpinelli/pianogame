@@ -15,49 +15,13 @@ using namespace std;
 #include <strsafe.h>
 const static wchar_t PathDelimiter = L'\\';
 #else
-#include "ApplicationServices/ApplicationServices.h"
 const static wchar_t PathDelimiter = L'/';
 #endif
 
 namespace FileSelector
 {
 
-#ifndef WIN32
-
-static pascal Boolean NavOpenFilterProc(AEDesc *item, void *info, NavCallBackUserData callBackUD, NavFilterModes filterMode)
-{
-   OSStatus status;
-   Boolean outCanOpenAsMovie;
-   Boolean canViewItem = false;
-
-   if (!item->descriptorType == typeFSRef) return false;
-   if (((NavFileOrFolderInfo*)info)->isFolder == true) return true;
-
-   FSRef fsRef;
-   status = AEGetDescData(item, &fsRef, sizeof(fsRef));
-   if (status != noErr) throw PianoGameError(WSTRING(L"Couldn't get item description.  Error code: " << static_cast<int>(status)));
-
-   const static int BufferSize(1024);
-   char path_buffer[BufferSize];
-   status = FSRefMakePath(&fsRef, (UInt8*)path_buffer, BufferSize);
-   if (status != noErr) throw PianoGameError(WSTRING(L"Couldn't get file path.  Error code: " << static_cast<int>(status)));
-
-   std::string path(path_buffer);
-   if (path.length() < 5) return false;
-   
-   std::string path_lower(StringLower<std::string>(path));
-   
-   bool allowed = false;
-   const static std::string allowed1(".mid");
-   const static std::string allowed2(".midi");
-   allowed = allowed || (path_lower.substr(path_lower.length() - allowed1.length()) == allowed1);
-   allowed = allowed || (path_lower.substr(path_lower.length() - allowed2.length()) == allowed2);
-
-   return allowed;
-}
-
-#endif
-
+#ifdef WIN32
 
 void RequestMidiFilename(std::wstring *returned_filename, std::wstring *returned_file_title)
 {
@@ -69,7 +33,6 @@ void RequestMidiFilename(std::wstring *returned_filename, std::wstring *returned
    wchar_t filename[BufferSize] = L"";
    wchar_t filetitle[BufferSize] = L"";
 
-#ifdef WIN32
    // Try to populate our "File Open" box with the last file selected
    if (StringCbCopyW(filename, BufferSize, last_filename.c_str()) == STRSAFE_E_INSUFFICIENT_BUFFER)
    {
@@ -118,72 +81,10 @@ void RequestMidiFilename(std::wstring *returned_filename, std::wstring *returned
 
    if (returned_file_title) *returned_file_title = L"";
    if (returned_filename) *returned_filename = L"";
-
-#else
    
-   OSStatus status;
-   
-   NavDialogCreationOptions options;
-   status  = NavGetDefaultDialogCreationOptions(&options);
-   if (status != noErr) throw PianoGameError(WSTRING(L"Couldn't create dialog options.  Error code: " << static_cast<int>(status)));
-   
-   options.windowTitle = CFSTR("Piano Game: Choose a MIDI song to play");
-   
-   // TODO: Should clean this up at shut-down
-   static NavObjectFilterUPP navFilterUPP(0);
-   if (navFilterUPP == 0) navFilterUPP = NewNavObjectFilterUPP(NavOpenFilterProc);
-   
-   NavDialogRef navDialog(0);
-   status = NavCreateChooseFileDialog(&options, 0, 0, 0, navFilterUPP, 0, &navDialog);
-   if (status != noErr) throw PianoGameError(WSTRING(L"Couldn't create open dialog.  Error code: " << static_cast<int>(status)));
-   
-   status = NavDialogRun(navDialog);
-   if (status != noErr) throw PianoGameError(WSTRING(L"Couldn't run open dialog.  Error code: " << static_cast<int>(status)));
-   
-   NavReplyRecord navReply;
-   status = NavDialogGetReply(navDialog, &navReply);
-
-   if (status == userCanceledErr || !navReply.validRecord)
-   {
-      NavDisposeReply(&navReply);
-
-      if (returned_file_title) *returned_file_title = L"";
-      if (returned_filename) *returned_filename = L"";
-      return;
-   }
-   
-   long item_count = 0;
-   status = AECountItems(&navReply.selection, &item_count);
-   if (status != noErr) throw PianoGameError(WSTRING(L"Couldn't count resulting items from open dialog.  Error code: " << static_cast<int>(status)));
-      
-   for (long i = 1; i <= item_count; i++)
-   {
-      FSRef fsRef;
-      status = AEGetNthPtr(&navReply.selection, i, typeFSRef, 0, 0, &fsRef, sizeof(FSRef), 0);
-      if (status != noErr) throw PianoGameError(WSTRING(L"Couldn't get FSRef pointer from open dialog.  Error code: " << static_cast<int>(status)));
-
-      CFStringRef file_title;
-      status = LSCopyDisplayNameForRef( &fsRef, &file_title );
-      if (status != noErr) throw PianoGameError(WSTRING(L"Couldn't get file title.  Error code: " << static_cast<int>(status)));
-      
-      const static int BufferSize(1024);
-      char path_buffer[BufferSize];
-      status = FSRefMakePath(&fsRef, (UInt8*)path_buffer, BufferSize);
-      if (status != noErr) throw PianoGameError(WSTRING(L"Couldn't get file path.  Error code: " << static_cast<int>(status)));
-      
-      std::string narrow_path(path_buffer);
-      std::wstring filepath(narrow_path.begin(), narrow_path.end());
-      
-      if (returned_file_title) *returned_file_title = WideFromMacString(file_title);
-      if (returned_filename) *returned_filename = filepath;
-      
-      CFRelease(file_title);
-   }
-   
-   NavDisposeReply(&navReply);
-   
-#endif
 }
+
+#endif
 
 void SetLastMidiFilename(const std::wstring &filename)
 {
@@ -192,6 +93,10 @@ void SetLastMidiFilename(const std::wstring &filename)
 
 std::wstring TrimFilename(const std::wstring &filename)
 {
+    if (filename.empty()) {
+        return filename;
+    }
+
    wstring song_title = filename;
    wstring song_lower = StringLower(song_title);
 

@@ -32,33 +32,20 @@ LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
 
 #else
 
+#include <GLUT/GLUT.h>
+
 static std::wstring external_command_line(L"");
 
-static AGLContext aglContext;
+static CGLContextObj glContext;
 static WindowRef window(0);
 
-static void InitEvents();
-static pascal void GameLoop(EventLoopTimerRef inTimer, void *);
-
-static EventLoopTimerRef GameLoopTimerRef;
-static EventHandlerRef MouseEventHandlerRef(0);
-static EventHandlerRef KeyEventHandlerRef(0);
-static EventHandlerRef AppEventHandlerRef(0);
-static EventHandlerRef MainWindowEventHandlerRef(0);
-static EventHandlerRef OtherWindowEventHandlerRef(0);
-static EventHandlerRef AppleEventHandlerRef(0);
-
-static pascal OSStatus AppEventHandlerProc(EventHandlerCallRef callRef, EventRef inEvent, void *);
-static pascal OSStatus MouseEventHandlerProc(EventHandlerCallRef callRef, EventRef inEvent, void *);
-static pascal OSStatus KeyEventHandlerProc(EventHandlerCallRef callRef, EventRef inEvent, void *);
-static pascal OSStatus WindowEventHandlerProc(EventHandlerCallRef callRef, EventRef inEvent, void *);
-static pascal OSStatus AppleEventHandlerProc(EventHandlerCallRef callRef, EventRef inEvent, void *);
-
-static pascal OSErr OpenEventHandlerProc(const AppleEvent *event, AppleEvent *, long);
+static void GameLoop();
+static void KeyEventHandlerProc(unsigned char key, int x, int y);
+static void SpecialKeyEventHandlerProc(int key, int x, int y);
+static void MouseEventHandlerProc(int button, int state, int x, int y);
+static void MouseMoveHandlerProc(int x, int y);
 
 #endif
-
-
 
 
 static const int WindowWidth  = Compatible::GetDisplayWidth();
@@ -128,7 +115,7 @@ int main(int argc, char *argv[])
 
    try
    {
-      wstring command_line;
+      wstring command_line = L"";
 
       UserSetting::Initialize(application_name);
 
@@ -162,6 +149,9 @@ int main(int argc, char *argv[])
       }
 #else
 
+/*
+      TODO
+ 
       OSStatus status;
 
       // Apparently the command-line isn't useful in Mac applications.  There
@@ -189,7 +179,8 @@ int main(int argc, char *argv[])
 
       // Check to see if during that event processing we read a filename.
       if (external_command_line.length() > 0) command_line = external_command_line;
-      
+
+*/
 #endif
 
       // Strip any leading or trailing quotes from the filename
@@ -217,37 +208,6 @@ int main(int argc, char *argv[])
          }
       }
 
-      // If midi couldn't be opened from command line filename or there
-      // simply was no command line filename, use a "file open" dialog.
-      if (command_line == L"")
-      {
-         while (!midi)
-         {
-            std::wstring file_title;
-            FileSelector::RequestMidiFilename(&command_line, &file_title);
-
-            if (command_line != L"")
-            {
-               try
-               {
-                  midi = new Midi(Midi::ReadFromFile(command_line));
-               }
-               catch (const MidiError &e)
-               {
-                  wstring wrapped_description = WSTRING(L"Problem while loading file: " << file_title << L"\n") + e.GetErrorDescription();
-                  Compatible::ShowError(wrapped_description);
-
-                  midi = 0;
-               }
-            }
-            else
-            {
-               // They pressed cancel, so they must not want to run
-               // the app anymore.
-               return 0;
-            }
-         }
-      }
 
       // Save this filename for next time so we can
       // seek the "Open" dialog to the right folder.
@@ -286,41 +246,23 @@ int main(int argc, char *argv[])
       if (!wglMakeCurrent(dc_win, glrc)) throw PianoGameError(L"Couldn't make OpenGL rendering context current.");
 #else
 
-      Rect windowRect;
-      windowRect.top = 0;
-      windowRect.left = 0;
-      windowRect.right = (short)Compatible::GetDisplayWidth();
-      windowRect.bottom = (short)Compatible::GetDisplayHeight();
+       glutInit(&argc, argv);
+       glutInitWindowSize(WindowWidth, WindowHeight);
+       glutInitWindowPosition(0, 0);
 
-      status = CreateNewWindow(kPlainWindowClass, kWindowStandardHandlerAttribute, &windowRect, &window);
-      if (status != noErr) throw PianoGameError(WSTRING(L"Unable to create window.  Error code: " << static_cast<int>(status)));
+       glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGBA);
+       glutCreateWindow("PianoGame");
 
-      SetWindowTitleWithCFString(window, MacStringFromWide(friendly_app_name).get());
+       glutDisplayFunc(GameLoop);
+       glutIdleFunc(GameLoop);
+       glutKeyboardFunc(KeyEventHandlerProc);
+       glutSpecialFunc(SpecialKeyEventHandlerProc);
+       glutMouseFunc(MouseEventHandlerProc);
+       glutMotionFunc(MouseMoveHandlerProc);
+       glutPassiveMotionFunc(MouseMoveHandlerProc);
 
-      RGBColor windowColor;
-      windowColor.red   = 65535 * 0.25;
-      windowColor.green = 65535 * 0.25;
-      windowColor.blue  = 65535 * 0.25;
-      SetWindowContentColor(window, &windowColor);
+       glContext = CGLGetCurrentContext();
 
-      InitEvents();
-
-      // MACTODO: The fade effect is way cooler
-      status = TransitionWindow(window, kWindowZoomTransitionEffect, kWindowShowTransitionAction, 0);
-      if (status != noErr) throw PianoGameError(WSTRING(L"Unable to transition the window.  Error code: " << static_cast<int>(status)));
-
-      SetPortWindowPort(window);
-
-      GLint attrib[] = { AGL_RGBA, AGL_DOUBLEBUFFER, AGL_NONE };
-      AGLPixelFormat aglPixelFormat = aglChoosePixelFormat(NULL, 0, attrib);
-      if (!aglPixelFormat) throw PianoGameError(L"Couldn't set AGL pixel format.");
-
-      aglContext = aglCreateContext(aglPixelFormat, (aglGetCurrentContext() != 0) ? aglGetCurrentContext() : 0);
-      aglSetDrawable(aglContext, GetWindowPort(window));
-      if (!aglSetCurrentContext(aglContext)) throw PianoGameError(L"Error in SetupAppleGLContext(): Could not set current AGL context.");
-
-      aglSetCurrentContext(aglContext);
-      aglUpdateContext(aglContext);
 
 #endif
 
@@ -387,13 +329,7 @@ int main(int argc, char *argv[])
       
 #else
 
-      RunApplicationEventLoop();
-      DisposeWindow(window);
-      
-      aglDestroyPixelFormat(aglPixelFormat);
-      aglSetCurrentContext(0);
-      aglSetDrawable(aglContext, 0);
-      aglDestroyContext(aglContext);
+      glutMainLoop();
       
       return 0;
 #endif
@@ -507,73 +443,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 #else
 
 
-void InitEvents()
-{
-   // Update as fast as possible
-   InstallEventLoopTimer( GetCurrentEventLoop(), 0, kEventDurationSecond / 10000.0, NewEventLoopTimerUPP(GameLoop), 0, &GameLoopTimerRef);
-   
-   OSStatus ret;
-   
-   static const EventTypeSpec appControlEvents[] =
-   {
-   { kEventClassApplication, kEventAppLaunchNotification },
-   { kEventClassApplication, kEventAppActivated },
-   { kEventClassApplication, kEventAppDeactivated },
-   { kEventClassApplication, kEventAppHidden },
-   { kEventClassApplication, kEventAppShown },
-   { kEventClassApplication, kEventAppTerminated },
-   { kEventClassApplication, kEventAppQuit }
-   };
-   
-   ret = InstallEventHandler(GetApplicationEventTarget(), NewEventHandlerUPP(AppEventHandlerProc), GetEventTypeCount(appControlEvents), appControlEvents, 0, &AppEventHandlerRef);
-   if (ret != noErr) throw PianoGameError(WSTRING(L"Unable to install app event handler.  Error code: " << static_cast<int>(ret)));
-   
-   static const EventTypeSpec mouseControlEvents[] =
-   {
-   { kEventClassMouse, kEventMouseDown },
-   { kEventClassMouse, kEventMouseUp },
-   { kEventClassMouse, kEventMouseMoved }
-   };
-   
-   ret = InstallEventHandler( GetApplicationEventTarget(), NewEventHandlerUPP( MouseEventHandlerProc ), GetEventTypeCount(mouseControlEvents), mouseControlEvents, 0, &MouseEventHandlerRef );
-   if (ret != noErr) throw PianoGameError(WSTRING(L"Unable to install mouse event handler.  Error code: " << static_cast<int>(ret)));
-   
-   static const EventTypeSpec keyControlEvents[] =
-   {
-   { kEventClassKeyboard, kEventRawKeyDown },
-   { kEventClassKeyboard, kEventRawKeyRepeat },
-   { kEventClassKeyboard, kEventRawKeyUp }
-   };
-   
-   ret = InstallEventHandler( GetApplicationEventTarget(), NewEventHandlerUPP( KeyEventHandlerProc ), GetEventTypeCount(keyControlEvents), keyControlEvents, 0, &KeyEventHandlerRef );
-   if (ret != noErr) throw PianoGameError(WSTRING(L"Unable to install key event handler.  Error code: " << static_cast<int>(ret)));
-      
-   static const EventTypeSpec windowControlEvents[] = 
-   {
-   { kEventClassWindow, kEventWindowUpdate },
-   { kEventClassWindow, kEventWindowDrawContent },
-   { kEventClassWindow, kEventWindowActivated },
-   { kEventClassWindow, kEventWindowDeactivated },
-   { kEventClassWindow, kEventWindowGetClickActivation },
-   { kEventClassWindow, kEventWindowBoundsChanging },
-   { kEventClassWindow, kEventWindowBoundsChanged },
-   { kEventClassWindow, kEventWindowShown },
-   { kEventClassWindow, kEventWindowShowing },
-   { kEventClassWindow, kEventWindowHidden },
-   { kEventClassWindow, kEventWindowHiding },
-   { kEventClassWindow, kEventWindowCursorChange },
-   { kEventClassWindow, kEventWindowClosed }
-   };
-   
-   if (OtherWindowEventHandlerRef != 0) RemoveEventHandler(OtherWindowEventHandlerRef);
-   
-   ret = InstallEventHandler(GetWindowEventTarget(window), NewEventHandlerUPP(WindowEventHandlerProc), GetEventTypeCount(windowControlEvents), windowControlEvents, 0, &OtherWindowEventHandlerRef );
-   if (ret != noErr) throw PianoGameError(WSTRING(L"Unable to install window event handler.  Error code: " << static_cast<int>(ret)));
-}
-
-
-
-static pascal void GameLoop(EventLoopTimerRef inTimer, void *)
+void GameLoop()
 {
    if (!window_state.IsActive()) return;
 
@@ -581,7 +451,7 @@ static pascal void GameLoop(EventLoopTimerRef inTimer, void *)
    {
       state_manager.Update(window_state.JustActivated());
 
-      Renderer renderer(aglContext);
+      Renderer renderer(glContext);
       renderer.SetVSyncInterval(1);
       
       state_manager.Draw(renderer);
@@ -613,6 +483,7 @@ static pascal void GameLoop(EventLoopTimerRef inTimer, void *)
 
 }
 
+/*
 static pascal OSErr OpenEventHandlerProc(const AppleEvent *event, AppleEvent *, long)
 {
    AEDescList docs;
@@ -643,29 +514,6 @@ static pascal OSErr OpenEventHandlerProc(const AppleEvent *event, AppleEvent *, 
 }
 
 
-OSStatus AppleEventHandlerProc(EventHandlerCallRef callRef, EventRef inEvent, void*)
-{
-    // Events of type kEventAppleEvent must be removed from the queue
-    //  before being passed to AEProcessAppleEvent.
-    bool release = false;
-    if (IsEventInQueue(GetMainEventQueue(), inEvent))
-    {
-        // RemoveEventFromQueue will release the event, which will
-        //  destroy it if we don't retain it first.
-        RetainEvent(inEvent);
-        release = true;
-        RemoveEventFromQueue(GetMainEventQueue(), inEvent);
-    }
- 
-    // Convert the event ref to the type AEProcessAppleEvent expects.
-    EventRecord eventRecord;
-    ConvertEventRefToEventRecord(inEvent, &eventRecord);
-    AEProcessAppleEvent(&eventRecord);
- 
-    if (release) ReleaseEvent(inEvent);
- 
-    return noErr;
-}
 
 static pascal OSStatus AppEventHandlerProc(EventHandlerCallRef callRef, EventRef event, void *)
 {
@@ -706,114 +554,70 @@ static pascal OSStatus AppEventHandlerProc(EventHandlerCallRef callRef, EventRef
    return eventNotHandledErr;
 }
 
+*/
 
 
-static pascal OSStatus WindowEventHandlerProc(EventHandlerCallRef callRef, EventRef event, void *)
+static void MouseEventHandlerProc(int button, int state, int x, int y)
 {
-   WindowRef window;
-   GetEventParameter(event, kEventParamDirectObject, typeWindowRef, NULL, sizeof(WindowRef), NULL, &window);
-   
-   switch(GetEventKind(event))
+    
+   switch (state)
    {
-      case kEventWindowClosed:
-         QuitApplicationEventLoop();
-         break;
-   };
-   
-   return eventNotHandledErr;
-}
-
-
-static pascal OSStatus MouseEventHandlerProc(EventHandlerCallRef callRef, EventRef event, void *)
-{
-   switch (GetEventKind(event))
-   {
-      case kEventMouseDown:
+      case GLUT_DOWN:
       {
-         EventMouseButton button;
-         GetEventParameter(event, kEventParamMouseButton, typeMouseButton, NULL, sizeof(EventMouseButton), NULL, &button );
-         
          switch (button)
          {
-         case kEventMouseButtonPrimary: state_manager.MousePress(MouseLeft); break;
-         case kEventMouseButtonSecondary: state_manager.MousePress(MouseRight); break;
+         case GLUT_LEFT_BUTTON: state_manager.MousePress(MouseLeft); break;
+         case GLUT_RIGHT_BUTTON: state_manager.MousePress(MouseRight); break;
          }
          
          break;
       }
          
-      case kEventMouseUp:
+      case GLUT_UP:
       {
-         EventMouseButton button;
-         GetEventParameter(event, kEventParamMouseButton, typeMouseButton, NULL, sizeof(EventMouseButton), NULL, &button );
-         
          switch (button)
          {
-         case kEventMouseButtonPrimary: state_manager.MouseRelease(MouseLeft); break;
-         case kEventMouseButtonSecondary: state_manager.MouseRelease(MouseRight); break;
+         case GLUT_LEFT_BUTTON: state_manager.MouseRelease(MouseLeft); break;
+         case GLUT_RIGHT_BUTTON: state_manager.MouseRelease(MouseRight); break;
          }
          
          break;
       }
          
-      case kEventMouseMoved:
-      {
-         HIPoint loc;
-         GetEventParameter(event, kEventParamMouseLocation, typeHIPoint, NULL, sizeof(HIPoint), NULL, &loc);
-         
-         state_manager.MouseMove((int)loc.x, (int)loc.y);
-            
-         break;
-      }
    };
    
-   return eventNotHandledErr;
 }
 
-static pascal OSStatus KeyEventHandlerProc(EventHandlerCallRef callRef, EventRef event, void *inUserData )
+static void MouseMoveHandlerProc(int x, int y)
 {
-   bool is_down = false;   
-   switch(GetEventKind(event))
-   {
-      case kEventRawKeyDown:
-      case kEventRawKeyRepeat:
-         is_down = true;
-         break;
-
-      case kEventRawKeyUp:
-         break;
-   };
-   
-   if (is_down)
-   {
-      UInt32 keyCode;
-      GetEventParameter(event, kEventParamKeyCode, typeUInt32, NULL, sizeof(keyCode), NULL, &keyCode);
-   
-      // Worst thing ever: I couldn't find a list of these
-      // keycodes, so they're determined experimentally.
-      switch (keyCode)
-      {
-      case 126: state_manager.KeyPress(KeyUp);     break;
-      case 125: state_manager.KeyPress(KeyDown);   break;
-      case 123: state_manager.KeyPress(KeyLeft);   break;
-      case 124: state_manager.KeyPress(KeyRight);  break;
-      case 49:  state_manager.KeyPress(KeySpace);  break;
-      case 36:  state_manager.KeyPress(KeyEnter);  break;
-      case 53:  state_manager.KeyPress(KeyEscape); break;
-
-      case 97:  state_manager.KeyPress(KeyF6);     break;
-
-      case 24:  state_manager.KeyPress(KeyPlus);   break;
-      case 27:  state_manager.KeyPress(KeyMinus);  break;
-      }
-   }
-   
-   return eventNotHandledErr;
+    state_manager.MouseMove(x, y);
 }
 
 
+void KeyEventHandlerProc(unsigned char key, int x, int y)
+{
+    switch (key)
+    {
+    case ' ':    state_manager.KeyPress(KeySpace);   break;
+    case 13:     state_manager.KeyPress(KeyEnter);   break;
+    case 27:     state_manager.KeyPress(KeyEscape);  break;
 
+    case '+': state_manager.KeyPress(KeyPlus);    break;
+    case '-': state_manager.KeyPress(KeyMinus);   break;
+    }
+}
 
+void SpecialKeyEventHandlerProc(int key, int x, int y)
+{
+    switch (key)
+    {
+    case GLUT_KEY_UP:       state_manager.KeyPress(KeyUp);      break;
+    case GLUT_KEY_DOWN:     state_manager.KeyPress(KeyDown);    break;
+    case GLUT_KEY_LEFT:     state_manager.KeyPress(KeyLeft);    break;
+    case GLUT_KEY_RIGHT:    state_manager.KeyPress(KeyRight);   break;
+    case GLUT_KEY_F6:       state_manager.KeyPress(KeyF6);      break;
+    }
+}
 
 #endif
 

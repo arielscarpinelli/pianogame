@@ -51,7 +51,8 @@ void Renderer::SetVSyncInterval(int interval)
 #else
 
    GLint i = interval;
-   GLboolean ret = aglSetInteger(m_context, AGL_SWAP_INTERVAL, &i);
+   GLboolean ret = CGLSetParameter (m_context, kCGLCPSwapInterval, &interval);
+
    if (ret == GL_FALSE)
    {
       // LOGTODO!
@@ -66,7 +67,7 @@ void Renderer::SwapBuffers()
 #ifdef WIN32
    ::SwapBuffers(m_context);
 #else
-   aglSwapBuffers(m_context);
+   glSwapAPPLE();
 #endif
 }
 
@@ -120,6 +121,21 @@ void Renderer::DrawTga(const Tga *tga, int in_x, int in_y, int width, int height
    glTexCoord2d(   tx, ty+th); glVertex3i(      x, y+height, 0);
    glTexCoord2d(tx+tw, ty+th); glVertex3i(x+width, y+height, 0);
    glTexCoord2d(tx+tw,    ty); glVertex3i(x+width,        y, 0);
+   glEnd();
+}
+
+void Renderer::DrawTextTextureQuad(unsigned int textureId, int in_x, int in_y, int width, int height) const
+{
+   const int x = in_x;// + m_xoffset;
+   const int y = in_y;// + m_yoffset;
+
+   SelectTexture(textureId);
+
+   glBegin(GL_QUADS);
+   glTexCoord2d(0, 1); glVertex3i(      x,        y, 0);
+   glTexCoord2d(0, 0); glVertex3i(      x, y+height, 0);
+   glTexCoord2d(1, 0); glVertex3i(x+width, y+height, 0);
+   glTexCoord2d(1, 1); glVertex3i(x+width,        y, 0);
    glEnd();
 }
 

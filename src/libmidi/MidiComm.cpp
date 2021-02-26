@@ -14,6 +14,7 @@ using namespace std;
 #include "../UserSettings.h"
 #include "../CompatibleSystem.h"
 #include "../string_util.h"
+#include "../PianoGameError.h"
 
 #ifdef WIN32
 
@@ -268,7 +269,6 @@ void MidiCommOut::Reset()
 
 #else
 
-
 static CFStringRef BuildEndpointName(MIDIEndpointRef endpoint)
 {
    CFMutableStringRef result = CFStringCreateMutable(0, 0);
@@ -398,11 +398,23 @@ MidiCommIn::MidiCommIn(unsigned int device_id)
 
    m_description = MidiCommIn::GetDeviceList()[device_id];
 
-   MIDIClientCreate(CFSTR("Piano Game"), 0, this, &m_client);
-   MIDIInputPortCreate(m_client, CFSTR("Piano Game In"), midi_input, this, &m_port);
+    OSStatus result = MIDIClientCreate(CFSTR("Piano Game"), 0, this, &m_client);
+    if (result != noErr) {
+        throw PianoGameError(L"Can't create midi client " + to_wstring(result));
+    }
+    result = MIDIInputPortCreate(m_client, CFSTR("Piano Game In"), midi_input, this, &m_port);
+    if (result != noErr) {
+        throw PianoGameError(L"Can't create midi port " + to_wstring(result));
+    };
    
    MIDIEndpointRef source = MIDIGetSource(device_id);
-   MIDIPortConnectSource(m_port, source, this);
+    if (source == 0) {
+        throw PianoGameError(L"Can't get midi source");
+    }
+    result = MIDIPortConnectSource(m_port, source, this);
+    if (result != noErr) {
+        throw PianoGameError(L"Can't connect midi port source " + to_wstring(result));
+    };
 }
 
 MidiCommIn::~MidiCommIn()
@@ -509,19 +521,30 @@ void MidiCommOut::Acquire(unsigned int device_id)
    if (m_description.id == 0)
    {
       // Open the Music Device
-      ComponentDescription compdesc;
-      compdesc.componentType = kAudioUnitComponentType;
-      compdesc.componentSubType = kAudioUnitSubType_MusicDevice;
-      compdesc.componentManufacturer = kAudioUnitID_DLSSynth;
-      compdesc.componentFlags = 0;
-      compdesc.componentFlagsMask = 0;
+      AudioComponentDescription compdesc;
+       compdesc.componentManufacturer = kAudioUnitManufacturer_Apple;
+       compdesc.componentType = kAudioUnitType_MusicDevice;
+       compdesc.componentSubType = kAudioUnitSubType_DLSSynth;
+       compdesc.componentFlags = 0;
+       compdesc.componentFlagsMask = 0;
       
-      Component compid = FindNextComponent(NULL, &compdesc);
-      m_device = static_cast<AudioUnit>(OpenComponent(compid));
+      AudioComponent compid = AudioComponentFindNext(NULL, &compdesc);
+      OSStatus result = AudioComponentInstanceNew(compid, &m_device);
       
-      // open the output unit
-      m_output = static_cast<AudioUnit>(OpenDefaultComponent(kAudioUnitComponentType, kAudioUnitSubType_Output));
+       if (result != noErr) {
+           throw PianoGameError(L"Can't find DLS synth");
+       }
       
+      compdesc.componentType = kAudioUnitType_Output;
+      compdesc.componentSubType = kAudioUnitSubType_DefaultOutput;
+
+       compid = AudioComponentFindNext(NULL, &compdesc);
+       result = AudioComponentInstanceNew(compid, &m_output);
+       
+        if (result != noErr) {
+            throw PianoGameError(L"Can't find default output");
+        }
+
       // connect the units
       AudioUnitConnection auconnect;
       auconnect.sourceAudioUnit = m_device;

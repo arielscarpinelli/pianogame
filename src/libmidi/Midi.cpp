@@ -54,7 +54,7 @@ Midi Midi::ReadFromStream(istream &stream)
    // defined and will always have a 4-byte header.  We use 5 so we get
    // free null termination.
    char           header_id[5] = { 0, 0, 0, 0, 0 };
-   unsigned long  header_length;
+   uint32_t  header_length;
    unsigned short format;
    unsigned short track_count;
    unsigned short time_division;
@@ -67,18 +67,18 @@ Midi Midi::ReadFromStream(istream &stream)
       else
       {
          // We know how to support RIFF files
-         unsigned long throw_away;
-         stream.read(reinterpret_cast<char*>(&throw_away), sizeof(unsigned long)); // RIFF length
-         stream.read(reinterpret_cast<char*>(&throw_away), sizeof(unsigned long)); // "RMID"
-         stream.read(reinterpret_cast<char*>(&throw_away), sizeof(unsigned long)); // "data"
-         stream.read(reinterpret_cast<char*>(&throw_away), sizeof(unsigned long)); // data size
+         uint32_t throw_away;
+         stream.read(reinterpret_cast<char*>(&throw_away), sizeof(uint32_t)); // RIFF length
+         stream.read(reinterpret_cast<char*>(&throw_away), sizeof(uint32_t)); // "RMID"
+         stream.read(reinterpret_cast<char*>(&throw_away), sizeof(uint32_t)); // "data"
+         stream.read(reinterpret_cast<char*>(&throw_away), sizeof(uint32_t)); // data size
 
          // Call this recursively, without the RIFF header this time
          return ReadFromStream(stream);
       }
    }
 
-   stream.read(reinterpret_cast<char*>(&header_length), sizeof(unsigned long));
+   stream.read(reinterpret_cast<char*>(&header_length), sizeof(uint32_t));
    stream.read(reinterpret_cast<char*>(&format),        sizeof(unsigned short));
    stream.read(reinterpret_cast<char*>(&track_count),   sizeof(unsigned short));
    stream.read(reinterpret_cast<char*>(&time_division), sizeof(unsigned short));
@@ -185,7 +185,7 @@ void Midi::BuildTempoTrack()
    //
    // It also does sorting for us so we can just copy the
    // events right over to the new track.
-   std::map<unsigned long, MidiEvent> tempo_events;
+   std::map<uint32_t, MidiEvent> tempo_events;
 
    // Run through each track looking for tempo events
    for (MidiTrackList::iterator t = m_tracks.begin(); t != m_tracks.end(); ++t)
@@ -193,7 +193,7 @@ void Midi::BuildTempoTrack()
       for (size_t i = 0; i < t->Events().size(); ++i)
       {
          MidiEvent ev = t->Events()[i];
-         unsigned long ev_pulses = t->EventPulses()[i];
+         uint32_t ev_pulses = t->EventPulses()[i];
 
          if (ev.Type() == MidiEventType_Meta && ev.MetaType() == MidiMetaEvent_TempoChange)
          {
@@ -215,7 +215,7 @@ void Midi::BuildTempoTrack()
             {
                // (We just erased the element at i, so
                // now i is pointing to the next element)
-               unsigned long next_dt = t->Events()[i].GetDeltaPulses();
+               uint32_t next_dt = t->Events()[i].GetDeltaPulses();
 
                t->Events()[i].SetDeltaPulses(ev.GetDeltaPulses() + next_dt);
             }
@@ -236,10 +236,10 @@ void Midi::BuildTempoTrack()
    MidiEventPulsesList &tempo_track_event_pulses = m_tracks[m_tracks.size()-1].EventPulses();
 
    // Copy over all our tempo events
-   unsigned long previous_absolute_pulses = 0;
-   for (std::map<unsigned long, MidiEvent>::const_iterator i = tempo_events.begin(); i != tempo_events.end(); ++i)
+   uint32_t previous_absolute_pulses = 0;
+   for (std::map<uint32_t, MidiEvent>::const_iterator i = tempo_events.begin(); i != tempo_events.end(); ++i)
    {
-      unsigned long absolute_pulses = i->first;
+      uint32_t absolute_pulses = i->first;
       MidiEvent ev = i->second;
 
       // Reset each of their delta times while we go
@@ -252,15 +252,15 @@ void Midi::BuildTempoTrack()
    }
 }
 
-unsigned long Midi::FindFirstNotePulse()
+uint32_t Midi::FindFirstNotePulse()
 {
-   unsigned long first_note_pulse = 0;
+   uint32_t first_note_pulse = 0;
 
    // Find the very last value it could ever possibly be, to start with
    for (MidiTrackList::const_iterator t = m_tracks.begin(); t != m_tracks.end(); ++t)
    {
       if (t->EventPulses().size() == 0) continue;
-      unsigned long pulses = t->EventPulses().back();
+      uint32_t pulses = t->EventPulses().back();
 
       if (pulses > first_note_pulse) first_note_pulse = pulses;
    }
@@ -273,7 +273,7 @@ unsigned long Midi::FindFirstNotePulse()
       {
          if (t->Events()[ev_id].Type() == MidiEventType_NoteOn)
          {
-            unsigned long note_pulse = t->EventPulses()[ev_id];
+            uint32_t note_pulse = t->EventPulses()[ev_id];
 
             if (note_pulse < first_note_pulse) first_note_pulse = note_pulse;
 
@@ -287,7 +287,7 @@ unsigned long Midi::FindFirstNotePulse()
    return first_note_pulse;
 }
 
-microseconds_t Midi::ConvertPulsesToMicroseconds(unsigned long pulses, microseconds_t tempo, unsigned short pulses_per_quarter_note)
+microseconds_t Midi::ConvertPulsesToMicroseconds(uint32_t pulses, microseconds_t tempo, unsigned short pulses_per_quarter_note)
 {
    // Here's what we have to work with:
    //   pulses is given
@@ -299,7 +299,7 @@ microseconds_t Midi::ConvertPulsesToMicroseconds(unsigned long pulses, microseco
    return static_cast<microseconds_t>(microseconds);
 }
 
-microseconds_t Midi::GetEventPulseInMicroseconds(unsigned long event_pulses, unsigned short pulses_per_quarter_note) const
+microseconds_t Midi::GetEventPulseInMicroseconds(uint32_t event_pulses, unsigned short pulses_per_quarter_note) const
 {
    if (m_tracks.size() == 0) return 0;
    const MidiTrack &tempo_track = m_tracks.back();
@@ -307,16 +307,16 @@ microseconds_t Midi::GetEventPulseInMicroseconds(unsigned long event_pulses, uns
    microseconds_t running_result = 0;
 
    bool hit = false;
-   unsigned long last_tempo_event_pulses = 0;
+   uint32_t last_tempo_event_pulses = 0;
    microseconds_t running_tempo = DefaultUSTempo;
    for (size_t i = 0; i < tempo_track.Events().size(); ++i)
    {
-      unsigned long tempo_event_pulses = tempo_track.EventPulses()[i];
+      uint32_t tempo_event_pulses = tempo_track.EventPulses()[i];
 
       // If the time we're asking to convert is still beyond
       // this tempo event, just add the last time slice (at
       // the previous tempo) to the running wall-clock time.
-      unsigned long delta_pulses = 0;
+      uint32_t delta_pulses = 0;
       if (event_pulses > tempo_event_pulses)
       {
          delta_pulses = tempo_event_pulses - last_tempo_event_pulses;
@@ -340,7 +340,7 @@ microseconds_t Midi::GetEventPulseInMicroseconds(unsigned long event_pulses, uns
    // The requested time may be after the very last tempo event
    if (!hit)
    {
-      unsigned long remaining_pulses = event_pulses - last_tempo_event_pulses;
+      uint32_t remaining_pulses = event_pulses - last_tempo_event_pulses;
       running_result += ConvertPulsesToMicroseconds(remaining_pulses, running_tempo, pulses_per_quarter_note);
    }
 

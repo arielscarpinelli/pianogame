@@ -7,6 +7,9 @@
 #include "version.h"
 #include "os.h"
 
+#ifndef WIN32
+    #include <sys/time.h>
+#endif
 
 namespace Compatible
 {
@@ -22,26 +25,15 @@ namespace Compatible
    }
 
 
+#ifdef WIN32
    void ShowError(const std::wstring &err)
    {
       const static std::wstring friendly_app_name = WSTRING(L"Piano Game " << PianoGameVersionString);
       const static std::wstring message_box_title = WSTRING(friendly_app_name << L" Error");
       
-#ifdef WIN32
       MessageBox(0, err.c_str(), message_box_title.c_str(), MB_ICONERROR);
-#else
-      
-      DialogRef dialog;
-      DialogItemIndex item;
-
-      // The cursor might have been hidden.
-      ShowMouseCursor();
-
-      CreateStandardAlert(kAlertStopAlert, MacStringFromWide(message_box_title).get(), MacStringFromWide(err).get(), 0, &dialog);
-      RunStandardAlert(dialog, 0, &item);
-      
-#endif
    }
+#endif
 
    void HideMouseCursor()
    {
@@ -81,13 +73,11 @@ namespace Compatible
    }
 
 
+#ifdef WIN32
    void GracefulShutdown()
    {
-#ifdef WIN32
       PostQuitMessage(0);
-#else
-      QuitApplicationEventLoop();
-#endif
    }
+#endif
 
 }; // End namespace

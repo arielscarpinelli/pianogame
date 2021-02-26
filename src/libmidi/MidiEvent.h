@@ -54,7 +54,7 @@ public:
 
    // Returns the "Program to change to" value if this is a Program
    // Change event, 0 otherwise.
-   int MidiEvent::ProgramNumber() const;
+   int ProgramNumber() const;
 
    // Returns the "velocity" of a Note-On (or 0 if this is a Note-
    // Off event).  Returns -1 for other event types.

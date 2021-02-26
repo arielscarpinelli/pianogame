@@ -314,6 +314,10 @@ void TitleState::Update()
 
    if (IsKeyPressed(KeyEnter) || m_continue_button.hit)
    {
+       if (!m_state.midi) {
+           Compatible::ShowError(L"Select a song first");
+           return;
+       }
       if (m_state.midi_out) m_state.midi_out->Reset();
       if (m_state.midi_in) m_state.midi_in->Reset();
 

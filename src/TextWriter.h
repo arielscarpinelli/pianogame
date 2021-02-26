@@ -101,6 +101,10 @@ private:
    
    Color m_color;
    std::wstring m_text;
+#ifndef WIN32
+    CGSize size;
+    unsigned int textureId;
+#endif
 };
 
 // newline manipulator

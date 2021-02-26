@@ -14,8 +14,8 @@
 #else
 #include <OpenGL/OpenGL.h>
 #include <AGL/agl.h>
-#include <AGL/gl.h>
-#include <AGL/glu.h>
+#include <OpenGL/gl.h>
+#include <OpenGL/glu.h>
 #endif
 
 
